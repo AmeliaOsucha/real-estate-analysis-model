@@ -1,4 +1,4 @@
-# real-estate-analysis-model
+# real-estate-analysis-model 
 # FULL REPORT: https://ameliaosucha.github.io/real-estate-analysis-model/real-estate-model.html
 ##  Key Features
 * **Multi-Source Data Integration:** Merged and cleaned administrative spatial and economic datasets covering 380 districts.
