@@ -1,0 +1,164 @@
+---
+title: "Prosty model ekonometryczny opisujący zmiany na rynku nieruchomości"
+author: "Amelia Osucha"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+library(readxl)
+library(tidyverse)
+library(car)
+library(lmtest)
+
+dane = read_excel("dane.xlsx")
+X3 = readRDS("x3.rds")
+dane = dane %>% left_join(X3, by = "powiat")
+dane = dane %>% mutate(X3 = as.numeric(unlist(X3)),X3 = coalesce(X3, 0))
+dane2 = dane %>% mutate(across(c(Y, starts_with("X")), ~ as.vector(scale(.x))))
+Y = dane2 %>% select(Y)
+X = dane2 %>% select(X1,X2,X3,X4,X5,X6)
+dane3 = dane %>% select(powiat, Y, X2, X4, X6)
+dane4 = dane3 %>% mutate(X2 = log(X2))
+```
+### Wprowadzenie i cel badania
+
+Rynek nieruchomości mieszkaniowych stanowi jedno z kluczowych odzwierciedleń kondycji gospodarczej kraju, poziomu zamożności społeczeństwa oraz sytuacji demograficznej w ujęciu regionalnym. Ceny mieszkań wykazują duże zróżnicowanie przestrzenne, co wynika z dysproporcji w rozwój gospodarczym poszczególnych regionów Polski. 
+
+Celem niniejszego projektu jest **identyfikacja oraz kwantyfikacja kluczowych czynników społeczno-gospodarczych i demograficznych**, które w istotny sposób wpływają na medianę cen za $1\text{ m}^2$ mieszkań w Polsce. Do realizacji tego zadania wykorzystano klasyczną modelizację ekonometryczną (OLS) na poziomie jednostek podziału terytorialnego.
+
+### Źródła danych i zakres przestrzenny
+
+Badanie opiera się na przekrojowych danych statystycznych obejmujących **380 powiatów** w Polsce dla roku 2024. Informacje źródłowe zostały pozyskane z baz **Głównego Urzędu Statystycznego (GUS)**. 
+
+Zmienną objaśnianą ($Y$) przyjęto jako medianę cen za $1\text{m}^2$ powierzchni użytkowej mieszkań. Jako potencjalne czynniki wpływające na rynek wyselekcjonowałam następujące zmienne objaśniające:
+
+* **$X_1$** – średnie miesięczne wynagrodzenie brutto (mierzce siłę nabywczą ludności),
+* **$X_2$** – stopa bezrobocia rejestrowanego (odzwierciedlająca stabilność gospodarki regionu),
+* **$X_3$** – liczba aktywnych studentów (wskazująca na atrakcyjność ośrodków akademickich),
+* **$X_4$** – saldo migracji (informujące o dynamice napływu/odpływu ludności),
+* **$X_5$** – gęstość zaludnienia (mierzca stopień zurbanizowania obszaru),
+* **$X_6$** – zasoby mieszkań na 1000 mieszkańców (wskaźnik nasycenia rynku nieruchomościami).
+
+Wszystkie dane zostały poddane wstępnej weryfikacji oraz standaryzacji w celu zapewnienia poprawności numerycznej i porównywalności wyników. 
+Poniżej prezentuje się początek przygotowanej ramki danych:
+``` {r}
+head(dane2)
+```
+Aby sprawdzić, które zmienne są odpowiednie do modelu, została użyta metoda Hellwiga.
+Na początku trzeba było utworzyć macierze korelacji pomiędzy zmiennymi Y i X, a później pomiędzy wszystkimi zmiennymi X i X. 
+``` {r}
+R_xx=cor(X)
+r_0j=cor(X, Y)
+p=ncol(X)
+```
+Aby znaleźć najlepszą kombinację zmiennych, potrzebne jest najpierw wyliczenie wszystkich kombinacji. Do tego celu utworzona została lista sekwencji od 1 do 380. 
+W mianowniku potrzebna była suma korelacji w wartości bezwzględnej 
+``` {r}
+wszystkie_kombinacje=unlist(lapply(1:p, function(k) combn(p, k, simplify=FALSE)), recursive=FALSE)
+
+h_wartosci=sapply(wszystkie_kombinacje, function(kombo) {
+  R_k=R_xx[kombo, kombo, drop=FALSE]
+  r_0k=r_0j[kombo]
+  sum(sapply(1:length(kombo), function(i) {
+    r_0k[i]^2 / sum(abs(R_k[i, ]))
+  }))
+})
+```
+W taki sposób dostaję gotową, najlepszą możliwą kombinację złożoną ze zmiennych X2, X4 oraz X6:
+``` {r}
+najlepsza_kombinacja = wszystkie_kombinacje[[which.max(h_wartosci)]]
+names(X)[najlepsza_kombinacja]
+```
+Został stworzony prosty model ekonometryczy. Co ważne, z uwagi na to, że stopa bezrobocia jest wyrażona w procentach, postanowiłam utworzyć model level-log, w którym zmienna X2 jest w logarytmie naturalnym.
+Według mnie skok bezrobocia w regionach dobrze rozwiniętych ma większą wagę niż w regionach o trwale wysokim bezrobociu, co specyfikacja level-log pozwala naturalnie uwzględnić.
+
+### Gotowy model: **($Y_i = β_0 + β_1 ln(X_2i) + β_2 X_4i + β_3 X_6i + ε_i$)**
+
+---
+``` {r}
+model = lm(Y ~ X2 + X4 + X6, data = dane4)
+```
+Od teraz, mój model będzie krył się pod zmienną "model" i to na tej zmiennej będą wykonywane wszystkie testy statystyczne.
+Na sam początek chcę sprawdzić istotność statystyczną modelu. Jednym z najłatwiejszych metod jest Metoda Najmniejszych Kwadratów (OLS)
+```{r}
+summary(model)
+```
+### Interpretacja wyników modelowania OLS
+
+Szacowany model ekonometryczny charakteryzuje się satysfakcjonującym stopniem dopasowania do danych, wyjaśniając blisko **46% zmienności** mediany cen mieszkań ($R^2 \approx 0.46$). Wszystkie dobrane zmienne objaśniające okazują się wysoce istotne statystycznie ($p < 0.001$).
+
+Interpretacja oszacowanych parametrów strukturalnych przedstawia się następująco:
+
+* **Zmienna ln($X_2$) (stopa bezrobocia) :** Wzrost tej zmiennej o 1% powoduje średnio spadek mediany cen mieszkań o ok. **9.82 PLN/m²**, ceteris paribus. Negatywna relacja znajduje uzasadnienie ekonomiczne (niższa siła nabywcza i mniejszy popyt w regionach o wyższym bezrobociu).
+* **Zmienna $X_4$ (saldo migracji) oraz $X_6$ (zasoby mieszkań):** Wykazują dodatni wpływ na cenę – wzrost każdej z tych cech o jednostkę przekłada się na wzrost średniej ceny o odpowiednio **1.25** oraz **8.85 PLN/m²**, przy niezmienności pozostałych czynników.
+
+``` {r}
+shapiro.test(residuals(model))
+vif(model)
+bptest(model)
+```
+Test Breuscha-Pagana służy do sprawdzenia, czy wariancja składników losowych jest stała. Ponieważ wartość p-value wynosi 0.1078 [($p > 0.05$)], to nie ma podstaw do odrzucenia hipotezy zerowej. Występuje homoskedastyczność wariancji reszt.  
+
+*Variance Inflation Factor* to Współczynnik Inflacji Wariancji, który ma pokazać współliniowość między zmiennymi objaśniającymi. W moim modelu współliniowość zmiennych X wynosi **1.23**,**1.16**,**1.1**. Dzięki wynikom zbliżonym do 1 zmienne nie są silnie skorelowane ze sobą.
+
+Test Shapiro-Wilka wskazuje na odrzucenie hipotezy o normalności reszt [$(p<0.05$)]. Jest to jednak zjawisko powszechne przy dużych próbach badawczych ($(n = 380)$), gdzie testy normalności stają się nadmiernie czułe nawet na minimalne odchylenia od rozkładu normalnego. Przy tak dużej liczbie obserwacji, na mocy Centralnego Twierdzenia Granicznego (CTG) własności asymptotyczne estymatorów MNK pozostają stabilne, a wnioskowanie statystyczne jest w pełni rzetelne.
+
+---
+``` {r}
+df_res=data.frame(Reszty = residuals(model))
+
+ggplot(df_res, aes(x = Reszty)) +
+geom_histogram(aes(y = after_stat(density)),bins=30,fill="skyblue",color="white",alpha=0.8) +
+geom_density(color="red") + 
+labs(title="Rozkład reszt modelu",x="Reszty",y="Gęstość") +
+theme_minimal()
+```
+
+Widoczne jest powiązanie z wynikiem testu Shapiro-Wilka. Kilka wyników odstających "ciągnie" wykres w prawą stronę, co powoduje, że rozkład reszt nie jest zbliżony do rozkładu normalnego. Występuje lekka prawostronna asymetria.
+Mimo tego, rozkład jest skoncentrowany wokół zera, co potwierdza poprawność modelu.
+
+```{r}
+df_dopasowanie=data.frame(Obserwowane = model$model$Y, Dopasowane = fitted(model))
+
+ggplot(df_dopasowanie, aes(x=Dopasowane, y=Obserwowane)) + 
+geom_point(color='hotpink',alpha=0.8,size=1.5) +
+geom_abline(color="red",linewidth=2,linetype="dashed") +
+labs(title="Wartości obserwowane oraz dopasowane przez model",y="Wartości obserwowane",x="Wartości dopasowane") +
+theme_minimal()
+```
+
+Wykres przedstawia relację między wartościami zaobserwowanymi a dopasowanymi przez model. Chmura punktów skupia się wokół czerwonej linii teoretycznej ($y = x$), co dowodzi, że model poprawnie identyfikuje ogólne tendencje cenowe na rynku nieruchomości. 
+Widoczne rozproszenie obserwacji odzwierciedla umiarkowany stopień dopasowania ($R^2 \approx 0.46$), wskazując jednocześnie na występowanie specyficznych rynków lokalnych (głównie dużych aglomeracji), których dynamika cenowa wykracza poza ujęte w modelu uwarunkowania makroekonomiczne.
+Widoczna jest również obecność punktu $y = 0$ dla jednego powiatu.
+
+``` {r}
+any(dane4$Y == 0)
+dane4[dane4$Y == 0, ]
+```
+
+Powiatem, w którym mediana cen mieszkań wyniosła 0, to powiat łańcucki. Mogło to być spowodowane błędem analitycznym lub brakiem danych. 
+
+``` {r}
+dane5 = dane %>% select(powiat,Y,X2,X4,X6) %>% filter(Y > 0)
+dane5 = dane5 %>% mutate(X2 = log(X2))
+model3 = lm(Y~X2+X4+X6, dane5)
+model3
+summary(model)$r.squared
+```
+
+Po krótkim sprawdzeniu, jak zachowuje się model bez tego powiatu, okazuje się, że statystycznie nic się nie zmieniło.
+Potwierdza to, że mój pierwotny schemat jest odporny na wartości odstające.
+
+---
+### Podsumowanie i wnioski końcowe
+
+Przeprowadzona analiza ekonometrii przestrzennej pozwoliła na zidentyfikowanie kluczowych determinant kształtujących medianę cen mieszkań w polskich powiatach w 2024 roku. 
+Otrzymany model dobrze odzwierciedla rynkowe mechanizmy gospodarcze.
+
+Główne wnioski z przeprowadzonych badań można sformułować następująco:
+
+1. **Istotność czynników:** Za pomocą metody Hellwiga wyselekcjonowano optymalny podzbiór zmiennych objaśniających, do których należą stopa bezrobocia ($X_2$), saldo migracji ($X_4$) oraz zasoby mieszkań ($X_6$).
+2. **Kierunek i siła wpływu:** Zastosowanie specyfikacji level-log pozwoliło poprawnie ująć nieliniową relację stopy bezrobocia względem cen mieszkań, wykazując ujemny wpływ bezrobocia oraz dodatnią relację salda migracji i zasobów mieszkaniowych na poziom cen w regionach.
+3. **Poprawność statystyczna:** Zbudowany model charakteryzuje się stabilnością parametrów (brak współliniowości potwierdzony współczynnikami VIF) oraz spełnieniem założeń o homoskedastyczności składnika losowego (test Breuscha-Pagana).
+
+W następnym projekcie powyższy model został użyty do interaktywnej aplikacji.
