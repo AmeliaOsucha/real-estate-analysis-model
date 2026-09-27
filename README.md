@@ -10,9 +10,8 @@
 ### Key Results:
 * Developed a robust, fully diagnostic-checked econometric model explaining price variance.
 * Implemented a fully reproducible, automated analysis pipeline using R Markdown
-
-
-
+  
+---
 
 ##  Key Features
 * **Multi-Source Data Integration:** Merged and cleaned administrative spatial and economic datasets covering 380 districts.
